@@ -106,6 +106,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($changed !== 1) {
                     throw new Exception('The subscription could not be confirmed. Refresh and try again.');
                 }
+                // Save administrator approval history
+                $history_stmt = $conn->prepare("
+                    INSERT INTO subscription_approval_history
+                        (subscription_id, admin_id)
+                    VALUES (?, ?)
+                ");
+
+                if (!$history_stmt) {
+                    throw new Exception('Unable to prepare approval history.');
+                }
+
+                $admin_id = (int)$_SESSION['user_id'];
+
+                $history_stmt->bind_param(
+                    'ii',
+                    $subscription_id,
+                    $admin_id
+                );
+
+                if (!$history_stmt->execute()) {
+                    throw new Exception('Unable to save approval history.');
+                }
+
+                $history_stmt->close();
 
                 $success_message = 'Payment simulation confirmed. The subscription is now active and marked as paid.';
             } else {
@@ -199,7 +223,149 @@ while ($row = $result->fetch_assoc()) {
     ) {
         $active_subscriptions++;
     }
+    
 }
+
+// ==========================================
+// SEARCH AND FILTER SUBSCRIPTIONS
+// ==========================================
+
+$search = trim($_GET['search'] ?? '');
+
+$subscription_filter = $_GET['subscription_status'] ?? 'all';
+$payment_filter = $_GET['payment_status'] ?? 'all';
+$date_filter = $_GET['date_filter'] ?? 'all';
+
+$start_date = $_GET['start_date'] ?? '';
+$end_date = $_GET['end_date'] ?? '';
+
+// Validate filters
+$allowed_subscription = ['all', 'Pending Approval', 'Active'];
+$allowed_payment = ['all', 'Pending Confirmation', 'Paid', 'Unpaid'];
+$allowed_dates = ['all', 'today', 'week', 'month', 'custom'];
+
+if (!in_array($subscription_filter, $allowed_subscription, true)) {
+    $subscription_filter = 'all';
+}
+
+if (!in_array($payment_filter, $allowed_payment, true)) {
+    $payment_filter = 'all';
+}
+
+if (!in_array($date_filter, $allowed_dates, true)) {
+    $date_filter = 'all';
+}
+
+// Validate custom dates
+if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $start_date)) {
+    $start_date = '';
+}
+
+if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $end_date)) {
+    $end_date = '';
+}
+
+// Apply search and filters
+$rows = array_values(array_filter($rows, function ($row) use (
+    $search,
+    $subscription_filter,
+    $payment_filter,
+    $date_filter,
+    $start_date,
+    $end_date
+) {
+
+    // Search Resident Name, Username, or Resident ID
+    if ($search !== '') {
+
+        $search_match =
+            stripos($row['fullname'] ?? '', $search) !== false ||
+            stripos($row['username'] ?? '', $search) !== false ||
+            stripos((string)$row['user_id'], $search) !== false;
+
+        if (!$search_match) {
+            return false;
+        }
+    }
+
+    // Filter Subscription Status
+    if (
+        $subscription_filter !== 'all' &&
+        $row['subscription_status'] !== $subscription_filter
+    ) {
+        return false;
+    }
+
+    // Filter Payment Status
+    if (
+        $payment_filter !== 'all' &&
+        $row['payment_status'] !== $payment_filter
+    ) {
+        return false;
+    }
+
+    // Filter Date Created
+    $created_date = date('Y-m-d', strtotime($row['created_at']));
+
+    if ($date_filter === 'today') {
+
+        if ($created_date !== date('Y-m-d')) {
+            return false;
+        }
+
+    } elseif ($date_filter === 'week') {
+
+        if (
+            strtotime($created_date) < strtotime('monday this week') ||
+            strtotime($created_date) > strtotime('sunday this week')
+        ) {
+            return false;
+        }
+
+    } elseif ($date_filter === 'month') {
+
+        if (date('Y-m', strtotime($created_date)) !== date('Y-m')) {
+            return false;
+        }
+
+    } elseif ($date_filter === 'custom') {
+
+        if ($start_date !== '' && $created_date < $start_date) {
+            return false;
+        }
+
+        if ($end_date !== '' && $created_date > $end_date) {
+            return false;
+        }
+    }
+
+    return true;
+}));
+// ==========================================
+// RETRIEVE APPROVAL HISTORY
+// ==========================================
+
+$history_sql = "
+    SELECT
+        h.id,
+        h.subscription_id,
+        h.admin_id,
+        h.approved_at,
+        admin.fullname AS admin_name
+    FROM subscription_approval_history AS h
+    LEFT JOIN users AS admin
+        ON admin.id = h.admin_id
+    ORDER BY h.approved_at DESC
+";
+
+$history_result = $conn->query($history_sql);
+
+if (!$history_result) {
+    die('Unable to load approval history: ' . e($conn->error));
+}
+
+ 
+
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -279,8 +445,201 @@ while ($row = $result->fetch_assoc()) {
     <div class="card border-0 shadow-sm">
         <div class="card-header bg-white py-3">
             <h2 class="h5 mb-0">Subscription Records</h2>
+            <button
+                type="button"
+                class="btn btn-outline-success btn-sm float-end"
+                data-bs-toggle="modal"
+                data-bs-target="#approvalHistoryModal"
+            >
+                <i class="bi bi-clock-history me-1"></i>
+                Approval History
+            </button>
         </div>
         <div class="card-body">
+
+                <!-- SEARCH AND FILTER BAR -->
+                <div class="mb-4">
+
+                    <form method="GET" action="">
+
+                        <div class="row g-3 align-items-end">
+
+                            <!-- Search -->
+                            <div class="col-md-4">
+
+                                <label class="form-label fw-semibold">
+                                    Search Resident
+                                </label>
+
+                                <input
+                                    type="text"
+                                    name="search"
+                                    class="form-control"
+                                    placeholder="Name, Username, or Resident ID..."
+                                    value="<?= e($search) ?>"
+                                >
+
+                            </div>
+
+                            <!-- Subscription Status -->
+                            <div class="col-md-2">
+
+                                <label class="form-label fw-semibold">
+                                    Subscription Status
+                                </label>
+
+                                <select name="subscription_status" class="form-select">
+
+                                    <option value="all"
+                                        <?= $subscription_filter === 'all' ? 'selected' : '' ?>>
+                                        All Status
+                                    </option>
+
+                                    <option value="Pending Approval"
+                                        <?= $subscription_filter === 'Pending Approval' ? 'selected' : '' ?>>
+                                        Pending Approval
+                                    </option>
+
+                                    <option value="Active"
+                                        <?= $subscription_filter === 'Active' ? 'selected' : '' ?>>
+                                        Active
+                                    </option>
+
+                                </select>
+
+                            </div>
+
+                            <!-- Payment Status -->
+                            <div class="col-md-2">
+
+                                <label class="form-label fw-semibold">
+                                    Payment Status
+                                </label>
+
+                                <select name="payment_status" class="form-select">
+
+                                    <option value="all"
+                                        <?= $payment_filter === 'all' ? 'selected' : '' ?>>
+                                        All Payments
+                                    </option>
+
+                                    <option value="Pending Confirmation"
+                                        <?= $payment_filter === 'Pending Confirmation' ? 'selected' : '' ?>>
+                                        Pending Confirmation
+                                    </option>
+
+                                    <option value="Paid"
+                                        <?= $payment_filter === 'Paid' ? 'selected' : '' ?>>
+                                        Paid
+                                    </option>
+
+                                    <option value="Unpaid"
+                                        <?= $payment_filter === 'Unpaid' ? 'selected' : '' ?>>
+                                        Unpaid
+                                    </option>
+
+                                </select>
+
+                            </div>
+
+                            <!-- Date Filter -->
+                            <div class="col-md-2">
+
+                                <label class="form-label fw-semibold">
+                                    Date Created
+                                </label>
+
+                                <select
+                                    name="date_filter"
+                                    id="dateFilter"
+                                    class="form-select"
+                                >
+
+                                    <option value="all"
+                                        <?= $date_filter === 'all' ? 'selected' : '' ?>>
+                                        All Dates
+                                    </option>
+
+                                    <option value="today"
+                                        <?= $date_filter === 'today' ? 'selected' : '' ?>>
+                                        Today
+                                    </option>
+
+                                    <option value="week"
+                                        <?= $date_filter === 'week' ? 'selected' : '' ?>>
+                                        This Week
+                                    </option>
+
+                                    <option value="month"
+                                        <?= $date_filter === 'month' ? 'selected' : '' ?>>
+                                        This Month
+                                    </option>
+
+                                    <option value="custom"
+                                        <?= $date_filter === 'custom' ? 'selected' : '' ?>>
+                                        Custom Range
+                                    </option>
+
+                                </select>
+
+                            </div>
+
+                            <!-- Buttons -->
+                            <div class="col-md-2 d-flex gap-2">
+
+                                <button type="submit" class="btn btn-success w-100">
+                                    <i class="bi bi-search"></i> Apply
+                                </button>
+
+                                <a href="<?= e($_SERVER['PHP_SELF']) ?>"
+                                class="btn btn-secondary">
+                                    <i class="bi bi-arrow-counterclockwise"></i>
+                                </a>
+
+                            </div>
+
+                            <!-- Custom Start Date -->
+                            <div class="col-md-3"
+                                id="startDateContainer"
+                                style="display: <?= $date_filter === 'custom' ? 'block' : 'none' ?>;">
+
+                                <label class="form-label fw-semibold">
+                                    Start Date
+                                </label>
+
+                                <input
+                                    type="date"
+                                    name="start_date"
+                                    class="form-control"
+                                    value="<?= e($start_date) ?>"
+                                >
+
+                            </div>
+
+                            <!-- Custom End Date -->
+                            <div class="col-md-3"
+                                id="endDateContainer"
+                                style="display: <?= $date_filter === 'custom' ? 'block' : 'none' ?>;">
+
+                                <label class="form-label fw-semibold">
+                                    End Date
+                                </label>
+
+                                <input
+                                    type="date"
+                                    name="end_date"
+                                    class="form-control"
+                                    value="<?= e($end_date) ?>"
+                                >
+
+                            </div>
+
+                        </div>
+
+                    </form>
+
+                </div>
+
             <?php if (count($rows) === 0): ?>
                 <div class="text-center text-secondary py-5">No subscription records found.</div>
             <?php else: ?>
@@ -383,8 +742,171 @@ while ($row = $result->fetch_assoc()) {
                 </div>
             <?php endif; ?>
         </div>
+        <!-- ================================= -->
+<!-- APPROVAL HISTORY MODAL -->
+<!-- ================================= -->
+
+<div class="modal fade" id="approvalHistoryModal" tabindex="-1"
+     aria-labelledby="approvalHistoryLabel" aria-hidden="true">
+
+    <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+
+        <div class="modal-content">
+
+            <div class="modal-header bg-success text-white">
+
+                <h5 class="modal-title" id="approvalHistoryLabel">
+                    <i class="bi bi-clock-history me-2"></i>
+                    Subscription Approval History
+                </h5>
+
+                <button type="button"
+                        class="btn-close btn-close-white"
+                        data-bs-dismiss="modal"
+                        aria-label="Close">
+                </button>
+
+            </div>
+
+            <div class="modal-body">
+
+                <p class="text-muted">
+                    Records of administrators who approved subscription payments.
+                </p>
+
+                <div class="table-responsive">
+
+                    <table class="table table-bordered table-hover align-middle">
+
+                        <thead class="table-success">
+
+                            <tr>
+                                <th>History ID</th>
+                                <th>Subscription ID</th>
+                                <th>Approved By</th>
+                                <th>Approval Date</th>
+                                <th>Approval Time</th>
+                            </tr>
+
+                        </thead>
+
+                        <tbody>
+
+                            <?php if ($history_result->num_rows > 0): ?>
+
+                                <?php while ($history = $history_result->fetch_assoc()): ?>
+
+                                    <tr>
+
+                                        <td>
+                                            <?= (int)$history['id'] ?>
+                                        </td>
+
+                                        <td>
+                                            #<?= (int)$history['subscription_id'] ?>
+                                        </td>
+
+                                        <td>
+                                            <span class="fw-semibold">
+                                                <?= e($history['admin_name'] ?? 'Unknown Admin') ?>
+                                            </span>
+
+                                            <br>
+
+                                            <small class="text-muted">
+                                                Admin ID: <?= (int)$history['admin_id'] ?>
+                                            </small>
+                                        </td>
+
+                                        <td>
+                                            <?= e(date(
+                                                'M d, Y',
+                                                strtotime($history['approved_at'])
+                                            )) ?>
+                                        </td>
+
+                                        <td>
+                                            <?= e(date(
+                                                'h:i:s A',
+                                                strtotime($history['approved_at'])
+                                            )) ?>
+                                        </td>
+
+                                    </tr>
+
+                                <?php endwhile; ?>
+
+                            <?php else: ?>
+
+                                <tr>
+                                    <td colspan="5"
+                                        class="text-center text-muted py-4">
+
+                                        <i class="bi bi-inbox fs-2"></i>
+
+                                        <br>
+
+                                        No approval history available yet.
+
+                                    </td>
+                                </tr>
+
+                            <?php endif; ?>
+
+                        </tbody>
+
+                    </table>
+
+                </div>
+
+            </div>
+
+            <div class="modal-footer">
+
+                <button type="button"
+                        class="btn btn-secondary"
+                        data-bs-dismiss="modal">
+                    Close
+                </button>
+
+            </div>
+
+        </div>
+
+    </div>
+
+</div>
     </div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+
+    const dateFilter = document.getElementById("dateFilter");
+
+    const startDateContainer = document.getElementById("startDateContainer");
+
+    const endDateContainer = document.getElementById("endDateContainer");
+
+    dateFilter.addEventListener("change", function () {
+
+        if (this.value === "custom") {
+
+            startDateContainer.style.display = "block";
+            endDateContainer.style.display = "block";
+
+        } else {
+
+            startDateContainer.style.display = "none";
+            endDateContainer.style.display = "none";
+
+        }
+
+    });
+
+});
+</script>
+
 </body>
 </html>
