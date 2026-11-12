@@ -24,6 +24,84 @@ $result = $conn->query($sql);
 if (!$result) {
     die("Database error: " . $conn->error);
 }
+// ==========================================
+// SEARCH AND FILTER FEEDBACK
+// ==========================================
+
+$search = trim($_GET['search'] ?? '');
+$type_filter = $_GET['type'] ?? 'all';
+$date_filter = $_GET['date_filter'] ?? 'all';
+
+$start_date = $_GET['start_date'] ?? '';
+$end_date = $_GET['end_date'] ?? '';
+
+$allowed_types = ['all', 'Complaint', 'Suggestion', 'Satisfaction'];
+
+if (!in_array($type_filter, $allowed_types, true)) {
+    $type_filter = 'all';
+}
+
+$sql = "SELECT id, user_id, feedback_type, message, created_at
+        FROM feedback
+        WHERE 1=1";
+
+$params = [];
+$param_types = "";
+
+// Search Resident ID or Message
+if ($search !== '') {
+    $sql .= " AND (CAST(user_id AS CHAR) LIKE ? OR message LIKE ?)";
+    $search_value = "%".$search."%";
+
+    $params[] = $search_value;
+    $params[] = $search_value;
+
+    $param_types .= "ss";
+}
+
+// Filter Feedback Type
+if ($type_filter !== 'all') {
+    $sql .= " AND feedback_type = ?";
+    $params[] = $type_filter;
+    $param_types .= "s";
+}
+
+// Filter Date
+if ($date_filter === 'today') {
+    $sql .= " AND DATE(created_at) = CURDATE()";
+
+} elseif ($date_filter === 'week') {
+    $sql .= " AND YEARWEEK(created_at, 1) = YEARWEEK(CURDATE(), 1)";
+
+} elseif ($date_filter === 'month') {
+    $sql .= " AND MONTH(created_at) = MONTH(CURDATE())
+              AND YEAR(created_at) = YEAR(CURDATE())";
+
+} elseif ($date_filter === 'custom') {
+
+    if ($start_date !== '') {
+        $sql .= " AND DATE(created_at) >= ?";
+        $params[] = $start_date;
+        $param_types .= "s";
+    }
+
+    if ($end_date !== '') {
+        $sql .= " AND DATE(created_at) <= ?";
+        $params[] = $end_date;
+        $param_types .= "s";
+    }
+}
+
+$sql .= " ORDER BY created_at DESC";
+
+$stmt = $conn->prepare($sql);
+
+if (!empty($params)) {
+    $stmt->bind_param($param_types, ...$params);
+}
+
+$stmt->execute();
+$result = $stmt->get_result();
 ?>
 
 <!DOCTYPE html>
@@ -148,6 +226,158 @@ body {
 
     <div class="card">
         <div class="card-body">
+            <!-- SEARCH AND FILTER BAR -->
+<div class="mb-4">
+
+    <form method="GET" action="">
+
+        <div class="row g-3 align-items-end">
+
+            <!-- Search -->
+            <div class="col-md-4">
+
+                <label class="form-label fw-semibold">
+                    Search Feedback
+                </label>
+
+                <input
+                    type="text"
+                    name="search"
+                    class="form-control"
+                    placeholder="Search Resident ID or Message..."
+                    value="<?= htmlspecialchars($search) ?>"
+                >
+
+            </div>
+
+            <!-- Feedback Type -->
+            <div class="col-md-2">
+
+                <label class="form-label fw-semibold">
+                    Feedback Type
+                </label>
+
+                <select name="type" class="form-select">
+
+                    <option value="all"
+                        <?= $type_filter === 'all' ? 'selected' : '' ?>>
+                        All Types
+                    </option>
+
+                    <option value="Complaint"
+                        <?= $type_filter === 'Complaint' ? 'selected' : '' ?>>
+                        Complaint
+                    </option>
+
+                    <option value="Suggestion"
+                        <?= $type_filter === 'Suggestion' ? 'selected' : '' ?>>
+                        Suggestion
+                    </option>
+
+                    <option value="Satisfaction"
+                        <?= $type_filter === 'Satisfaction' ? 'selected' : '' ?>>
+                        Satisfaction
+                    </option>
+
+                </select>
+
+            </div>
+
+            <!-- Date Filter -->
+            <div class="col-md-2">
+
+                <label class="form-label fw-semibold">
+                    Date Submitted
+                </label>
+
+                <select name="date_filter"
+                        id="dateFilter"
+                        class="form-select">
+
+                    <option value="all"
+                        <?= $date_filter === 'all' ? 'selected' : '' ?>>
+                        All Dates
+                    </option>
+
+                    <option value="today"
+                        <?= $date_filter === 'today' ? 'selected' : '' ?>>
+                        Today
+                    </option>
+
+                    <option value="week"
+                        <?= $date_filter === 'week' ? 'selected' : '' ?>>
+                        This Week
+                    </option>
+
+                    <option value="month"
+                        <?= $date_filter === 'month' ? 'selected' : '' ?>>
+                        This Month
+                    </option>
+
+                    <option value="custom"
+                        <?= $date_filter === 'custom' ? 'selected' : '' ?>>
+                        Custom Range
+                    </option>
+
+                </select>
+
+            </div>
+
+            <!-- Custom Start Date -->
+            <div class="col-md-2" id="startDateContainer"
+                 style="display: <?= $date_filter === 'custom' ? 'block' : 'none' ?>;">
+
+                <label class="form-label fw-semibold">
+                    Start Date
+                </label>
+
+                <input
+                    type="date"
+                    name="start_date"
+                    class="form-control"
+                    value="<?= htmlspecialchars($start_date) ?>"
+                >
+
+            </div>
+
+            <!-- Custom End Date -->
+            <div class="col-md-2" id="endDateContainer"
+                 style="display: <?= $date_filter === 'custom' ? 'block' : 'none' ?>;">
+
+                <label class="form-label fw-semibold">
+                    End Date
+                </label>
+
+                <input
+                    type="date"
+                    name="end_date"
+                    class="form-control"
+                    value="<?= htmlspecialchars($end_date) ?>"
+                >
+
+            </div>
+
+            <!-- Buttons -->
+            <div class="col-md-2 d-flex gap-2">
+
+                <button type="submit"
+                        class="btn btn-success w-100">
+                    <i class="bi bi-search me-1"></i>
+                    Apply
+                </button>
+
+                <a href="<?= htmlspecialchars($_SERVER['PHP_SELF']) ?>"
+                   class="btn btn-secondary">
+                    <i class="bi bi-arrow-counterclockwise"></i>
+                </a>
+
+            </div>
+
+        </div>
+
+    </form>
+
+</div>
 
             <div class="table-responsive">
 
@@ -232,6 +462,29 @@ body {
 </div>
 
 <script src="../assets/vendor/bootstrap/js/bootstrap.bundle.min.js"></script>
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+
+    const dateFilter = document.getElementById("dateFilter");
+
+    const startDateContainer = document.getElementById("startDateContainer");
+
+    const endDateContainer = document.getElementById("endDateContainer");
+
+    dateFilter.addEventListener("change", function () {
+
+        if (this.value === "custom") {
+            startDateContainer.style.display = "block";
+            endDateContainer.style.display = "block";
+        } else {
+            startDateContainer.style.display = "none";
+            endDateContainer.style.display = "none";
+        }
+
+    });
+
+});
+</script>
 
 </body>
 </html>
