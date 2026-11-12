@@ -18,6 +18,95 @@ $errorMessage = "";
 
 $assignmentSuccess = "";
 
+$groupSuccess = "";
+
+// ==========================================
+// CREATE HOUSEHOLD GROUP
+// ==========================================
+if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["create_group"])) {
+    try {
+        $groupName = trim($_POST["group_name"] ?? "");
+        $description = trim($_POST["description"] ?? "");
+
+        if ($groupName === "") {
+            throw new Exception("Please enter a group name.");
+        }
+
+        $stmt = $pdo->prepare("
+            INSERT INTO household_groups (group_name, description)
+            VALUES (?, ?)
+        ");
+
+        $stmt->execute([$groupName, $description]);
+
+        header("Location: admin_routes.php?group_created=1");
+        exit;
+
+    } catch (Exception $e) {
+        $errorMessage = $e->getMessage();
+    }
+}
+
+// ==========================================
+// ASSIGN HOUSEHOLDS TO A GROUP
+// ==========================================
+if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["assign_households"])) {
+    try {
+        $groupId = (int) ($_POST["group_id"] ?? 0);
+        $householdIds = $_POST["household_ids"] ?? [];
+
+        if (!is_array($householdIds) || empty($householdIds)) {
+            throw new Exception("Please select at least one household.");
+        }
+
+        // Validate selected group.
+        // Group ID 0 means Unassigned.
+        if ($groupId > 0) {
+            $checkGroup = $pdo->prepare("
+                SELECT id FROM household_groups WHERE id = ?
+            ");
+
+            $checkGroup->execute([$groupId]);
+
+            if (!$checkGroup->fetch()) {
+                throw new Exception("Selected group does not exist.");
+            }
+        }
+
+        $pdo->beginTransaction();
+
+        $updateHousehold = $pdo->prepare("
+            UPDATE households
+            SET group_id = ?
+            WHERE id = ?
+        ");
+
+        foreach ($householdIds as $householdId) {
+            $householdId = (int) $householdId;
+
+            if ($householdId > 0) {
+                $updateHousehold->execute([
+                    $groupId > 0 ? $groupId : null,
+                    $householdId
+                ]);
+            }
+        }
+
+        $pdo->commit();
+
+        header("Location: admin_routes.php?households_assigned=1");
+        exit;
+
+    } catch (Exception $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+
+        $errorMessage = $e->getMessage();
+    }
+}
+
+
 // ASSIGN COLLECTOR
 if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["assign_collector"])) {
     try {
@@ -129,37 +218,93 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["delete_route"])) {
     }
 }
 
-// GENERATE REGULAR ROUTE
-if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["generate_regular_route"])) {
+
+// ==========================================
+// GENERATE GROUP-BASED REGULAR ROUTE
+// ==========================================
+if (
+    $_SERVER["REQUEST_METHOD"] === "POST" &&
+    isset($_POST["generate_regular_route"])
+) {
     try {
-        $pdo->beginTransaction();
+        $groupId = (int) ($_POST["group_id"] ?? -1);
 
-        $routeHouseholds = $pdo->query("
-            SELECT id FROM households
-            WHERE latitude IS NOT NULL
-              AND longitude IS NOT NULL
-            ORDER BY id ASC
-        ")->fetchAll(PDO::FETCH_COLUMN);
-
-        if (count($routeHouseholds) === 0) {
-            throw new Exception("No registered households with coordinates found.");
+        if ($groupId < 0) {
+            throw new Exception("Please select a household group.");
         }
 
+        // Get selected group name
+        if ($groupId === 0) {
+            $groupName = "Unassigned";
+        } else {
+            $groupCheck = $pdo->prepare("
+                SELECT group_name
+                FROM household_groups
+                WHERE id = ?
+            ");
+
+            $groupCheck->execute([$groupId]);
+            $groupName = $groupCheck->fetchColumn();
+
+            if ($groupName === false) {
+                throw new Exception("Selected household group does not exist.");
+            }
+        }
+
+        $pdo->beginTransaction();
+
+        // Retrieve ONLY households belonging to the selected group
+        if ($groupId === 0) {
+            $householdStmt = $pdo->query("
+                SELECT id
+                FROM households
+                WHERE group_id IS NULL
+                  AND latitude IS NOT NULL
+                  AND longitude IS NOT NULL
+                ORDER BY id ASC
+            ");
+        } else {
+            $householdStmt = $pdo->prepare("
+                SELECT id
+                FROM households
+                WHERE group_id = ?
+                  AND latitude IS NOT NULL
+                  AND longitude IS NOT NULL
+                ORDER BY id ASC
+            ");
+
+            $householdStmt->execute([$groupId]);
+        }
+
+        $routeHouseholds = $householdStmt->fetchAll(PDO::FETCH_COLUMN);
+
+        if (empty($routeHouseholds)) {
+            throw new Exception(
+                "No households with GPS coordinates found in " .
+                $groupName . "."
+            );
+        }
+
+        // Create route associated with selected group
         $routeStmt = $pdo->prepare("
             INSERT INTO collection_routes
-                (route_name, route_type, status, created_by)
-            VALUES (?, 'regular', 'pending', ?)
+                (route_name, route_type, status, created_by, group_id)
+            VALUES (?, 'regular', 'pending', ?, ?)
         ");
 
         $routeStmt->execute([
-            "Regular Collection Route - " . date("Y-m-d H:i"),
-            $_SESSION['user_id']
+            "Regular Collection Route - " . $groupName .
+            " - " . date("Y-m-d H:i"),
+            $_SESSION["user_id"],
+            $groupId === 0 ? null : $groupId
         ]);
 
         $routeId = $pdo->lastInsertId();
 
+        // Save selected households as route stops
         $stopStmt = $pdo->prepare("
-            INSERT INTO route_stops (route_id, household_id, stop_order)
+            INSERT INTO route_stops
+                (route_id, household_id, stop_order)
             VALUES (?, ?, ?)
         ");
 
@@ -177,6 +322,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["generate_regular_rout
         exit;
 
     } catch (Exception $e) {
+
         if ($pdo->inTransaction()) {
             $pdo->rollBack();
         }
@@ -184,6 +330,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["generate_regular_rout
         $errorMessage = $e->getMessage();
     }
 }
+
 
 // Retrieve collectors for the assignment dropdown
 $collectorStmt = $pdo->query("
@@ -193,6 +340,38 @@ $collectorStmt = $pdo->query("
     ORDER BY fullname ASC
 ");
 $collectors = $collectorStmt->fetchAll(PDO::FETCH_ASSOC);
+
+// ==========================================
+// RETRIEVE HOUSEHOLD GROUPS
+// ==========================================
+$groupStmt = $pdo->query("
+    SELECT id, group_name
+    FROM household_groups
+    ORDER BY group_name ASC
+");
+
+$householdGroups = $groupStmt->fetchAll(PDO::FETCH_ASSOC);
+
+
+// ==========================================
+// RETRIEVE ALL HOUSEHOLDS FOR GROUPING
+// Includes households without GPS coordinates
+// ==========================================
+$groupHouseholdStmt = $pdo->query("
+    SELECT
+        h.id,
+        h.house_address,
+        h.group_id,
+        u.fullname,
+        hg.group_name
+    FROM households h
+    INNER JOIN users u ON h.user_id = u.id
+    LEFT JOIN household_groups hg ON h.group_id = hg.id
+    ORDER BY h.id ASC
+");
+
+$groupHouseholds = $groupHouseholdStmt->fetchAll(PDO::FETCH_ASSOC);
+
 
 // Retrieve routes and their assigned collectors
 $allRoutesStmt = $pdo->query("
@@ -733,6 +912,190 @@ if ($householdsJson === false || $routeStopsJson === false) {
 
 </section>
 
+<!-- HOUSEHOLD GROUP MANAGEMENT -->
+<section class="card">
+
+    <div class="card-header">
+        <div>
+            <h2>
+                <i class="fas fa-layer-group"></i>
+                Household Group Management
+            </h2>
+            <p>Create groups and organize registered households.</p>
+        </div>
+    </div>
+
+    <?php if (isset($_GET['group_created'])): ?>
+        <div class="alert success">
+            Household group created successfully!
+        </div>
+    <?php endif; ?>
+
+    <?php if (isset($_GET['households_assigned'])): ?>
+        <div class="alert success">
+            Households assigned successfully!
+        </div>
+    <?php endif; ?>
+
+    <!-- CREATE GROUP -->
+    <div style="background:#f8faf9; padding:20px; border-radius:10px; margin-bottom:25px;">
+
+        <h3 style="font-size:16px; margin-bottom:15px;">
+            <i class="fas fa-plus-circle"></i> Create New Group
+        </h3>
+
+        <form method="POST" action="admin_routes.php"
+              style="display:flex; gap:10px; flex-wrap:wrap;">
+
+            <input
+                type="text"
+                name="group_name"
+                placeholder="Enter group name (e.g. Group A)"
+                required
+                style="flex:1; min-width:200px; padding:11px; border:1px solid #ccc; border-radius:6px;"
+            >
+
+            <input
+                type="text"
+                name="description"
+                placeholder="Description (optional)"
+                style="flex:1; min-width:200px; padding:11px; border:1px solid #ccc; border-radius:6px;"
+            >
+
+            <button type="submit"
+                    name="create_group"
+                    value="1"
+                    class="btn btn-green">
+                <i class="fas fa-plus"></i> Create Group
+            </button>
+
+        </form>
+    </div>
+
+
+    <!-- ASSIGN HOUSEHOLDS -->
+    <h3 style="font-size:16px; margin-bottom:12px;">
+        <i class="fas fa-users"></i> Assign Households to Groups
+    </h3>
+
+    <form method="POST" action="admin_routes.php">
+
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:15px;">
+
+            <select name="group_id"
+                    required
+                    style="padding:11px; border:1px solid #ccc; border-radius:6px; min-width:200px;">
+
+                <option value="">Select Destination Group</option>
+
+                <option value="0">Unassigned Households</option>
+
+                <?php foreach ($householdGroups as $group): ?>
+                    <option value="<?php echo (int)$group['id']; ?>">
+                        <?php echo htmlspecialchars($group['group_name']); ?>
+                    </option>
+                <?php endforeach; ?>
+
+            </select>
+
+            <button type="submit"
+                    name="assign_households"
+                    value="1"
+                    class="btn btn-green"
+                    onclick="return confirm('Assign selected households to this group?');">
+
+                <i class="fas fa-check"></i> Assign Selected Households
+
+            </button>
+
+        </div>
+
+
+        <div class="table-wrapper">
+
+            <table>
+
+                <thead>
+                    <tr>
+                        <th>Select</th>
+                        <th>Household ID</th>
+                        <th>Resident Name</th>
+                        <th>House Address</th>
+                        <th>Current Group</th>
+                    </tr>
+                </thead>
+
+                <tbody>
+
+                    <?php if (!empty($groupHouseholds)): ?>
+
+                        <?php foreach ($groupHouseholds as $household): ?>
+
+                            <tr>
+
+                                <td>
+                                    <input
+                                        type="checkbox"
+                                        name="household_ids[]"
+                                        value="<?php echo (int)$household['id']; ?>"
+                                        style="width:17px; height:17px; cursor:pointer;"
+                                    >
+                                </td>
+
+                                <td class="household-id">
+                                    #<?php echo (int)$household['id']; ?>
+                                </td>
+
+                                <td>
+                                    <?php echo htmlspecialchars($household['fullname']); ?>
+                                </td>
+
+                                <td>
+                                    <?php echo htmlspecialchars($household['house_address']); ?>
+                                </td>
+
+                                <td>
+                                    <?php if ($household['group_id'] === null): ?>
+
+                                        <span style="color:#d97706; font-weight:bold;">
+                                            Unassigned
+                                        </span>
+
+                                    <?php else: ?>
+
+                                        <span style="color:#198754; font-weight:bold;">
+                                            <?php echo htmlspecialchars($household['group_name'] ?? 'Unknown Group'); ?>
+                                        </span>
+
+                                    <?php endif; ?>
+                                </td>
+
+                            </tr>
+
+                        <?php endforeach; ?>
+
+                    <?php else: ?>
+
+                        <tr>
+                            <td colspan="5" class="empty">
+                                No registered households found.
+                            </td>
+                        </tr>
+
+                    <?php endif; ?>
+
+                </tbody>
+
+            </table>
+
+        </div>
+
+    </form>
+
+</section>
+<!-- END HOUSEHOLD GROUP MANAGEMENT -->
+
+
 
     <!-- SUMMARY -->
     <div class="summary-grid">
@@ -780,18 +1143,39 @@ if ($householdsJson === false || $routeStopsJson === false) {
                 <p>View households with registered map coordinates.</p>
             </div>
 
-            <form method="POST" action="admin_routes.php">
-                <button
-                    type="submit"
-                    name="generate_regular_route"
-                    value="1"
-                    class="btn btn-green"
-                    onclick="return confirm('Generate a new regular collection route?');"
-                >
-                    <i class="fas fa-route"></i>
-                    Generate Regular Route
-                </button>
-            </form>
+            
+<form method="POST" action="admin_routes.php"
+      style="display:flex; gap:10px; flex-wrap:wrap;">
+
+    <select name="group_id"
+            required
+            style="padding:11px; border:1px solid #ccc; border-radius:6px;">
+
+        <option value="">Select Household Group</option>
+
+        <option value="0">Unassigned Households</option>
+
+        <?php foreach ($householdGroups as $group): ?>
+            <option value="<?php echo (int)$group['id']; ?>">
+                <?php echo htmlspecialchars($group['group_name']); ?>
+            </option>
+        <?php endforeach; ?>
+
+    </select>
+
+    <button
+        type="submit"
+        name="generate_regular_route"
+        value="1"
+        class="btn btn-green"
+        onclick="return confirm('Generate a collection route for this group only?');"
+    >
+        <i class="fas fa-route"></i>
+        Generate Route
+    </button>
+
+</form>
+
         </div>
 
         <div class="table-wrapper">
@@ -906,7 +1290,7 @@ if ($householdsJson === false || $routeStopsJson === false) {
         const bounds = new google.maps.LatLngBounds();
         const infoWindow = new google.maps.InfoWindow();
 
-        households.forEach(household => {
+       routeStops.forEach(household => {
 
             const position = {
                 lat: parseFloat(household.latitude),
