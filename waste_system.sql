@@ -1,11 +1,11 @@
 -- phpMyAdmin SQL Dump
--- version 5.2.1
+-- version 5.2.3
 -- https://www.phpmyadmin.net/
 --
 -- Host: 127.0.0.1
--- Generation Time: Nov 09, 2026 at 04:58 AM
--- Server version: 10.4.32-MariaDB
--- PHP Version: 8.2.12
+-- Generation Time: Nov 12, 2026 at 09:44 AM
+-- Server version: 10.11.16-MariaDB
+-- PHP Version: 8.3.36
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
 START TRANSACTION;
@@ -20,6 +20,26 @@ SET time_zone = "+00:00";
 --
 -- Database: `waste_system`
 --
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `collection_approval_history`
+--
+
+CREATE TABLE `collection_approval_history` (
+  `id` int(11) NOT NULL,
+  `schedule_id` int(11) NOT NULL,
+  `admin_id` int(11) NOT NULL,
+  `approved_at` timestamp NOT NULL DEFAULT current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+--
+-- Dumping data for table `collection_approval_history`
+--
+
+INSERT INTO `collection_approval_history` (`id`, `schedule_id`, `admin_id`, `approved_at`) VALUES
+(1, 9, 1, '2026-11-12 07:28:47');
 
 -- --------------------------------------------------------
 
@@ -75,7 +95,7 @@ INSERT INTO `collection_schedules` (`id`, `user_id`, `collector_id`, `notes`, `c
 (6, 15, NULL, 'Andami na', '2026-11-18', '13:00:00', 'Kanto lang po', 'Approved', '2026-11-03 02:45:53'),
 (7, 15, NULL, 'Andami na naman', '2026-11-30', '17:00:00', 'Kanto lang po', 'Rejected', '2026-11-03 02:46:20'),
 (8, 15, NULL, 'andami amo', '2026-11-30', '20:00:00', 'kanto', 'Pending', '2026-11-03 02:59:05'),
-(9, 15, NULL, 'hi', '2026-11-13', '07:00:00', 'j', 'Pending', '2026-11-03 03:19:28'),
+(9, 15, NULL, 'hi', '2026-11-13', '07:00:00', 'j', 'Approved', '2026-11-03 03:19:28'),
 (10, 15, 5, 'hello dami na nito lude', '2026-11-07', '18:06:00', 'sa bahay ko po', 'Approved', '2026-11-05 14:41:24'),
 (11, 19, NULL, '', '2026-12-01', '08:00:00', 'sa bahay ko po', 'Rejected', '2026-11-07 05:53:22'),
 (12, 19, 5, '', '2026-12-01', '08:00:00', 'saamin po lods', 'Approved', '2026-11-07 05:56:06');
@@ -164,7 +184,8 @@ CREATE TABLE `email_otps` (
 --
 
 INSERT INTO `email_otps` (`id`, `user_id`, `otp_code`, `expires_at`, `attempts`, `created_at`) VALUES
-(2, 20, '$2y$10$MrJUCpLP7fQiF0eAtnn4Q.778SoR7VKl9UEnrD8u6F3/MZiu/9tru', '2026-11-09 03:30:26', 0, '2026-11-09 02:25:26');
+(2, 20, '$2y$10$MrJUCpLP7fQiF0eAtnn4Q.778SoR7VKl9UEnrD8u6F3/MZiu/9tru', '2026-11-09 03:30:26', 0, '2026-11-09 02:25:26'),
+(4, 22, '$2y$10$y23yGtnJGQ5PUfsjArc1HOdeA5/3CdHJUuIO5Jq6DsgalBHnL.zXi', '2026-11-12 08:27:25', 0, '2026-11-12 07:22:25');
 
 -- --------------------------------------------------------
 
@@ -307,6 +328,19 @@ INSERT INTO `subscriptions` (`id`, `user_id`, `service_fee`, `months`, `original
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `subscription_approval_history`
+--
+
+CREATE TABLE `subscription_approval_history` (
+  `id` int(11) NOT NULL,
+  `subscription_id` int(11) NOT NULL,
+  `admin_id` int(11) NOT NULL,
+  `approved_at` timestamp NULL DEFAULT current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `subscription_point_redemptions`
 --
 
@@ -357,7 +391,8 @@ INSERT INTO `users` (`id`, `fullname`, `users`, `password`, `role`, `email`, `em
 (18, 'tisting', 'res3', '$2y$10$Tlq8.MQXCqaFLvyYPyqyUuYU4aOnoC1DwsQiYfh2H6SlP7sbH.gEC', 'residents', NULL, 0, NULL),
 (19, 'lance allen', 'resident4', '$2y$10$3QXcMmhhurkc0GxMYOpDd.SnsGxj7wg68Un7JL8YTGk9NhwqdprCa', 'residents', 'lanceallendelacruz38@gmail.com', 1, '2026-11-07 13:52:38'),
 (20, 'ryan', 'ryan123', '$2y$10$EaAVqpZU40ZSbRq775gaG.5mEEZYucywibzAMgscYCcmKxciBuuSy', 'residents', 'redhairshank66@gmail.com', 0, NULL),
-(21, 'lance allen dela cruz', 'ryandave123', '$2y$10$qzrfJGRuFi9ypdtwb/sG0ukPMYSGPdyN7MraViqlwr.MQfVpOVGDO', 'residents', 'aragondave2@gmail.com', 1, '2026-11-09 10:29:09');
+(21, 'lance allen dela cruz', 'ryandave123', '$2y$10$qzrfJGRuFi9ypdtwb/sG0ukPMYSGPdyN7MraViqlwr.MQfVpOVGDO', 'residents', 'aragondave2@gmail.com', 1, '2026-11-09 10:29:09'),
+(22, 'dave', 'dave', '$2y$10$CuVqVTeJJ0wwGctdQadj7OJxJktj5E9pNBYnuHTEHEvZS1Ne4VQ12', 'residents', 'rosialdadave75@gmail.com', 0, NULL);
 
 -- --------------------------------------------------------
 
@@ -387,6 +422,14 @@ INSERT INTO `waste_collections` (`id`, `household_id`, `collector_id`, `collecti
 --
 -- Indexes for dumped tables
 --
+
+--
+-- Indexes for table `collection_approval_history`
+--
+ALTER TABLE `collection_approval_history`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_schedule_id` (`schedule_id`),
+  ADD KEY `idx_admin_id` (`admin_id`);
 
 --
 -- Indexes for table `collection_routes`
@@ -468,6 +511,14 @@ ALTER TABLE `subscriptions`
   ADD UNIQUE KEY `user_id` (`user_id`);
 
 --
+-- Indexes for table `subscription_approval_history`
+--
+ALTER TABLE `subscription_approval_history`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `subscription_id` (`subscription_id`),
+  ADD KEY `admin_id` (`admin_id`);
+
+--
 -- Indexes for table `subscription_point_redemptions`
 --
 ALTER TABLE `subscription_point_redemptions`
@@ -492,6 +543,12 @@ ALTER TABLE `waste_collections`
 --
 -- AUTO_INCREMENT for dumped tables
 --
+
+--
+-- AUTO_INCREMENT for table `collection_approval_history`
+--
+ALTER TABLE `collection_approval_history`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
 
 --
 -- AUTO_INCREMENT for table `collection_routes`
@@ -527,7 +584,7 @@ ALTER TABLE `eco_points`
 -- AUTO_INCREMENT for table `email_otps`
 --
 ALTER TABLE `email_otps`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=4;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=5;
 
 --
 -- AUTO_INCREMENT for table `feedback`
@@ -560,6 +617,12 @@ ALTER TABLE `subscriptions`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=8;
 
 --
+-- AUTO_INCREMENT for table `subscription_approval_history`
+--
+ALTER TABLE `subscription_approval_history`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT for table `subscription_point_redemptions`
 --
 ALTER TABLE `subscription_point_redemptions`
@@ -569,7 +632,7 @@ ALTER TABLE `subscription_point_redemptions`
 -- AUTO_INCREMENT for table `users`
 --
 ALTER TABLE `users`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=22;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=23;
 
 --
 -- AUTO_INCREMENT for table `waste_collections`
@@ -580,6 +643,12 @@ ALTER TABLE `waste_collections`
 --
 -- Constraints for dumped tables
 --
+
+--
+-- Constraints for table `collection_approval_history`
+--
+ALTER TABLE `collection_approval_history`
+  ADD CONSTRAINT `fk_approval_schedule` FOREIGN KEY (`schedule_id`) REFERENCES `collection_schedules` (`id`) ON DELETE CASCADE ON UPDATE CASCADE;
 
 --
 -- Constraints for table `collection_routes`
