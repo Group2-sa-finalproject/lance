@@ -30,6 +30,43 @@ try {
     die("Database error: " . htmlspecialchars($e->getMessage()));
 }
 
+// ==========================================
+// SEARCH AND FILTER HOUSEHOLDS
+// ==========================================
+
+$search = trim($_GET["search"] ?? "");
+$sort_order = $_GET["sort"] ?? "asc";
+
+// Validate sorting option
+if (!in_array($sort_order, ["asc", "desc"], true)) {
+    $sort_order = "asc";
+}
+
+// Search by Household ID or House Address
+if ($search !== "") {
+
+    $households = array_values(array_filter(
+        $households,
+        function ($house) use ($search) {
+
+            return
+                stripos((string)$house["id"], $search) !== false ||
+                stripos($house["house_address"] ?? "", $search) !== false;
+        }
+    ));
+}
+
+// Sort households by ID
+usort($households, function ($a, $b) use ($sort_order) {
+
+    $comparison = (int)$a["id"] <=> (int)$b["id"];
+
+    return $sort_order === "desc"
+        ? -$comparison
+        : $comparison;
+});
+
+
 $householdsJson = json_encode(
     $households,
     JSON_HEX_TAG |
@@ -351,6 +388,75 @@ if ($householdsJson === false) {
                     </p>
                 </div>
             </div>
+
+            <!-- Search and Filter Bar -->
+            <div class="mb-4">
+
+                <form method="GET" action="">
+
+                    <div class="row g-3 align-items-end">
+
+                        <!-- Search -->
+                        <div class="col-md-6">
+
+                            <label class="form-label fw-semibold">
+                                Search Household
+                            </label>
+
+                            <input
+                                type="text"
+                                name="search"
+                                class="form-control"
+                                placeholder="Search Household ID or House Address..."
+                                value="<?php echo htmlspecialchars($search); ?>"
+                            >
+
+                        </div>
+
+                        <!-- Sort Filter -->
+                        <div class="col-md-4">
+
+                            <label class="form-label fw-semibold">
+                                Filter / Sort by Household ID
+                            </label>
+
+                            <select name="sort" class="form-select">
+
+                                <option value="asc"
+                                    <?php echo $sort_order === "asc" ? "selected" : ""; ?>>
+                                    Lowest to Highest
+                                </option>
+
+                                <option value="desc"
+                                    <?php echo $sort_order === "desc" ? "selected" : ""; ?>>
+                                    Highest to Lowest
+                                </option>
+
+                            </select>
+
+                        </div>
+
+                        <!-- Buttons -->
+                        <div class="col-md-2 d-flex gap-2">
+
+                            <button type="submit" class="btn btn-success w-100">
+                                <i class="bi bi-search me-1"></i>
+                                Apply
+                            </button>
+
+                            <a href="<?php echo htmlspecialchars($_SERVER['PHP_SELF']); ?>"
+                            class="btn btn-secondary">
+                                <i class="bi bi-arrow-counterclockwise"></i>
+                            </a>
+
+                        </div>
+
+                    </div>
+
+                </form>
+
+            </div>
+
 
             <div class="table-wrapper">
 
