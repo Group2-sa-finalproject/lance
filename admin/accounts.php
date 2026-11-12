@@ -53,7 +53,48 @@ $total_accounts = 0;
 foreach ($accounts as $account_list) {
     $total_accounts += count($account_list);
 }
-?>
+
+// ==========================================
+// SEARCH AND FILTER
+// ==========================================
+
+$search = trim($_GET['search'] ?? '');
+$role_filter = $_GET['role'] ?? 'all';
+
+$allowed_roles = ['all', 'admin', 'collector', 'residents'];
+
+if (!in_array($role_filter, $allowed_roles, true)) {
+    $role_filter = 'all';
+}
+
+// Search accounts by Full Name, Username, or Account ID
+foreach ($accounts as $role => $account_list) {
+
+    $filtered_accounts = [];
+
+    foreach ($account_list as $account) {
+
+        if ($search !== '') {
+            $matches =
+                stripos($account['fullname'], $search) !== false ||
+                stripos($account['users'], $search) !== false ||
+                stripos((string)$account['id'], $search) !== false;
+
+            if (!$matches) {
+                continue;
+            }
+        }
+
+        $filtered_accounts[] = $account;
+    }
+
+    $accounts[$role] = $filtered_accounts;
+}
+
+?> 
+
+
+
 
 <!DOCTYPE html>
 <html lang="en">
@@ -296,7 +337,80 @@ foreach ($accounts as $account_list) {
 
         <!-- Account Tables -->
 
-        <?php foreach ($roles as $role => $title) { ?>
+<!-- Search and Filter Bar -->
+<div class="account-section mb-4">
+
+    <form method="GET" action="">
+
+        <div class="row g-3 align-items-end">
+
+            <!-- Search -->
+            <div class="col-md-6">
+                <label class="form-label fw-semibold">
+                    Search Account
+                </label>
+
+                <input
+                    type="text"
+                    name="search"
+                    class="form-control"
+                    placeholder="Search name, username, or account ID..."
+                    value="<?php echo htmlspecialchars($search); ?>"
+                >
+            </div>
+
+            <!-- Role Filter -->
+            <div class="col-md-4">
+                <label class="form-label fw-semibold">
+                    Filter by Account Type
+                </label>
+
+                <select name="role" class="form-select">
+                    <option value="all" <?php echo $role_filter === 'all' ? 'selected' : ''; ?>>
+                        All Accounts
+                    </option>
+
+                    <option value="admin" <?php echo $role_filter === 'admin' ? 'selected' : ''; ?>>
+                        Administrators
+                    </option>
+
+                    <option value="collector" <?php echo $role_filter === 'collector' ? 'selected' : ''; ?>>
+                        Garbage Collectors
+                    </option>
+
+                    <option value="residents" <?php echo $role_filter === 'residents' ? 'selected' : ''; ?>>
+                        Residents
+                    </option>
+                </select>
+            </div>
+
+            <!-- Buttons -->
+            <div class="col-md-2 d-flex gap-2">
+
+                <button type="submit" class="btn btn-success w-100">
+                    <i class="bi bi-search me-1"></i>
+                    Search
+                </button>
+
+                <a href="<?php echo htmlspecialchars($_SERVER['PHP_SELF']); ?>"
+                   class="btn btn-secondary">
+                    <i class="bi bi-arrow-counterclockwise"></i>
+                </a>
+
+            </div>
+
+        </div>
+
+    </form>
+
+</div>
+
+
+        <?php foreach ($roles as $role => $title) {
+    if ($role_filter !== 'all' && $role_filter !== $role) {
+        continue;
+    }
+?>
 
             <div class="account-section">
 
