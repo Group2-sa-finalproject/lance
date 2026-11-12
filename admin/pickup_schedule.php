@@ -103,6 +103,41 @@ if ($action === "update_status") {
 
                         $message = "Collection schedule status updated successfully.";
 
+                        // SAVE APPROVAL HISTORY
+                        // Only save when the request is newly approved
+                        if (
+                            $old_status !== "Approved" &&
+                            $new_status === "Approved"
+                        ) {
+
+                            $history_stmt = $conn->prepare("
+                                INSERT INTO collection_approval_history
+                                    (schedule_id, admin_id)
+                                VALUES (?, ?)
+                            ");
+
+                            if ($history_stmt) {
+
+                                $admin_id = (int) $_SESSION["user_id"];
+
+                                $history_stmt->bind_param(
+                                    "ii",
+                                    $schedule_id,
+                                    $admin_id
+                                );
+
+                                if (!$history_stmt->execute()) {
+                                    $message .= " Warning: Approval history could not be saved.";
+                                }
+
+                                $history_stmt->close();
+
+                            } else {
+
+                                $message .= " Warning: Approval history could not be saved.";
+                            }
+                        }
+
                         // Send email only when approval or rejection is new
                         if (
                             $old_status !== $new_status &&
@@ -333,6 +368,109 @@ $first_day = (int) date("w", strtotime($month_start));
 $previous_month = date("Y-m", strtotime($month_start . " -1 month"));
 $next_month = date("Y-m", strtotime($month_start . " +1 month"));
 
+// ==========================================
+// SEARCH AND FILTER SETTINGS
+// ==========================================
+
+$search = trim($_GET["search"] ?? "");
+$timeframe = $_GET["timeframe"] ?? "all";
+$status_filter = $_GET["status"] ?? "all";
+
+$start_date = $_GET["start_date"] ?? "";
+$end_date = $_GET["end_date"] ?? "";
+
+$filter_start = "";
+$filter_end = "";
+
+// Timeframe filter
+if ($timeframe === "week") {
+
+    $filter_start = date("Y-m-d", strtotime("monday this week"));
+    $filter_end = date("Y-m-d", strtotime("sunday this week"));
+
+} elseif ($timeframe === "month") {
+
+    $filter_start = date("Y-m-01");
+    $filter_end = date("Y-m-t");
+
+} elseif ($timeframe === "custom") {
+
+    $valid_start = DateTime::createFromFormat("!Y-m-d", $start_date);
+    $valid_end = DateTime::createFromFormat("!Y-m-d", $end_date);
+
+    if (
+        $valid_start &&
+        $valid_end &&
+        $valid_start->format("Y-m-d") === $start_date &&
+        $valid_end->format("Y-m-d") === $end_date &&
+        $start_date <= $end_date
+    ) {
+        $filter_start = $start_date;
+        $filter_end = $end_date;
+    }
+}
+
+// Allowed statuses
+$allowed_statuses = [
+    "all",
+    "Pending",
+    "Approved",
+    "Completed",
+    "Rejected"
+];
+
+if (!in_array($status_filter, $allowed_statuses, true)) {
+    $status_filter = "all";
+}
+
+// Search and filter checker
+$matchesSchedule = function ($row, $section_status = null) use (
+    $search,
+    $status_filter,
+    $filter_start,
+    $filter_end
+) {
+
+    // Search resident name, username, or address
+    if ($search !== "") {
+
+        $matches =
+            stripos($row["fullname"] ?? "", $search) !== false ||
+            stripos($row["users"] ?? "", $search) !== false ||
+            stripos($row["collection_address"] ?? "", $search) !== false;
+
+        if (!$matches) {
+            return false;
+        }
+    }
+
+    // Status filter
+    $current_status = $section_status ?? ($row["status"] ?? "");
+
+    if (
+        $status_filter !== "all" &&
+        $current_status !== $status_filter
+    ) {
+        return false;
+    }
+
+    // Date filter
+    $record_date = $row["collection_date"] ?? "";
+
+    if ($filter_start !== "" && $filter_end !== "") {
+
+        if (
+            $record_date < $filter_start ||
+            $record_date > $filter_end
+        ) {
+            return false;
+        }
+    }
+
+    return true;
+};
+
+
 // Get schedules for the selected month
 $schedules = [];
 
@@ -368,6 +506,14 @@ while ($row = $result->fetch_assoc()) {
 }
 
 $stmt->close();
+
+// Apply search and filters to calendar schedules
+$schedules = array_values(array_filter(
+    $schedules,
+    function ($schedule) use ($matchesSchedule) {
+        return $matchesSchedule($schedule);
+    }
+));
 
 // Count active bookings for each date
 $booked_dates = [];
@@ -414,6 +560,13 @@ $pending_schedules = [];
 while ($row = $pending_result->fetch_assoc()) {
     $pending_schedules[] = $row;
 }
+// Filter pending schedules
+$pending_schedules = array_values(array_filter(
+    $pending_schedules,
+    function ($schedule) use ($matchesSchedule) {
+        return $matchesSchedule($schedule, "Pending");
+    }
+));
 // Get all collector accounts
 $collectors = [];
 
@@ -451,6 +604,13 @@ $approved_schedules = [];
 while ($row = $approved_result->fetch_assoc()) {
     $approved_schedules[] = $row;
 }
+// Filter approved schedules
+$approved_schedules = array_values(array_filter(
+    $approved_schedules,
+    function ($schedule) use ($matchesSchedule) {
+        return $matchesSchedule($schedule, "Approved");
+    }
+));
 if (!$collector_result) {
     die("Unable to load collectors: " . $conn->error);
 }
@@ -464,6 +624,26 @@ $today = date("Y-m-d");
 
 // Display selected month
 $month_label = $date_object->format("F Y");
+// ==========================================
+// GET COLLECTION APPROVAL HISTORY
+// ==========================================
+
+$history_result = $conn->query("
+    SELECT
+        h.id,
+        h.schedule_id,
+        h.admin_id,
+        h.approved_at,
+        u.fullname AS admin_name
+    FROM collection_approval_history h
+    LEFT JOIN users u
+        ON h.admin_id = u.id
+    ORDER BY h.approved_at DESC
+");
+
+if (!$history_result) {
+    die("Unable to load approval history: " . $conn->error);
+}
 ?>
 
 <!DOCTYPE html>
@@ -696,10 +876,185 @@ $month_label = $date_object->format("F Y");
         </a>
 
         <h2 class="page-title">Collection Schedule</h2>
+        <button type="button"
+        class="btn btn-outline-success btn-sm mb-3"
+        data-bs-toggle="modal"
+        data-bs-target="#approvalHistoryModal">
+
+            <i class="bi bi-clock-history me-1"></i>
+            Approval History
+
+        </button>
+
+        
+        
 
         <p class="text-muted">
             View residents' collection bookings and manage their request status.
         </p>
+
+<!-- Search and Filter Bar -->
+<section class="schedule-card">
+
+    <h5 class="mb-3">
+        <i class="bi bi-search text-success me-2"></i>
+        Search and Filter Collection Schedules
+    </h5>
+
+    <form method="GET" action="">
+
+        <input type="hidden" name="month"
+               value="<?php echo htmlspecialchars($month); ?>">
+
+        <div class="row g-3 align-items-end">
+
+            <!-- Search -->
+            <div class="col-md-4">
+
+                <label class="form-label fw-semibold">
+                    Search
+                </label>
+
+                <input
+                    type="text"
+                    name="search"
+                    class="form-control"
+                    placeholder="Resident name, username, or address..."
+                    value="<?php echo htmlspecialchars($search); ?>"
+                >
+
+            </div>
+
+            <!-- Timeframe -->
+            <div class="col-md-3">
+
+                <label class="form-label fw-semibold">
+                    Timeframe
+                </label>
+
+                <select name="timeframe" id="timeframe"
+                        class="form-select">
+
+                    <option value="all"
+                        <?php echo $timeframe === "all" ? "selected" : ""; ?>>
+                        All Dates
+                    </option>
+
+                    <option value="week"
+                        <?php echo $timeframe === "week" ? "selected" : ""; ?>>
+                        This Week
+                    </option>
+
+                    <option value="month"
+                        <?php echo $timeframe === "month" ? "selected" : ""; ?>>
+                        This Month
+                    </option>
+
+                    <option value="custom"
+                        <?php echo $timeframe === "custom" ? "selected" : ""; ?>>
+                        Custom Date Range
+                    </option>
+
+                </select>
+
+            </div>
+
+            <!-- Status -->
+            <div class="col-md-3">
+
+                <label class="form-label fw-semibold">
+                    Collection Status
+                </label>
+
+                <select name="status" class="form-select">
+
+                    <option value="all"
+                        <?php echo $status_filter === "all" ? "selected" : ""; ?>>
+                        All Status
+                    </option>
+
+                    <option value="Pending"
+                        <?php echo $status_filter === "Pending" ? "selected" : ""; ?>>
+                        Pending
+                    </option>
+
+                    <option value="Approved"
+                        <?php echo $status_filter === "Approved" ? "selected" : ""; ?>>
+                        Approved
+                    </option>
+
+                    <option value="Completed"
+                        <?php echo $status_filter === "Completed" ? "selected" : ""; ?>>
+                        Completed
+                    </option>
+
+                    <option value="Rejected"
+                        <?php echo $status_filter === "Rejected" ? "selected" : ""; ?>>
+                        Rejected
+                    </option>
+
+                </select>
+
+            </div>
+
+            <!-- Buttons -->
+            <div class="col-md-2 d-flex gap-2">
+
+                <button type="submit" class="btn btn-success w-100">
+                    <i class="bi bi-search me-1"></i>
+                    Apply
+                </button>
+
+                <a href="<?php echo htmlspecialchars($_SERVER["PHP_SELF"]); ?>"
+                   class="btn btn-secondary">
+                    <i class="bi bi-arrow-counterclockwise"></i>
+                </a>
+
+            </div>
+
+        </div>
+
+        <!-- Custom Date Range -->
+        <div class="row g-3 mt-2"
+             id="customDateRange"
+             style="<?php echo $timeframe === "custom" ? "" : "display:none;"; ?>">
+
+            <div class="col-md-4">
+
+                <label class="form-label fw-semibold">
+                    Start Date
+                </label>
+
+                <input
+                    type="date"
+                    name="start_date"
+                    class="form-control"
+                    value="<?php echo htmlspecialchars($start_date); ?>"
+                >
+
+            </div>
+
+            <div class="col-md-4">
+
+                <label class="form-label fw-semibold">
+                    End Date
+                </label>
+
+                <input
+                    type="date"
+                    name="end_date"
+                    class="form-control"
+                    value="<?php echo htmlspecialchars($end_date); ?>"
+                >
+
+            </div>
+
+        </div>
+
+    </form>
+
+</section>
+
 
         <!-- Messages -->
         <?php if ($message !== ""): ?>
@@ -1154,6 +1509,152 @@ $month_label = $date_object->format("F Y");
             </div>
 
         </section>
+        <!-- ========================================== -->
+        <!-- COLLECTION APPROVAL HISTORY MODAL -->
+        <!-- ========================================== -->
+
+        <div class="modal fade"
+            id="approvalHistoryModal"
+            tabindex="-1"
+            aria-labelledby="approvalHistoryLabel"
+            aria-hidden="true">
+
+            <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+
+                <div class="modal-content">
+
+                    <div class="modal-header bg-success text-white">
+
+                        <h5 class="modal-title" id="approvalHistoryLabel">
+                            <i class="bi bi-clock-history me-2"></i>
+                            Collection Approval History
+                        </h5>
+
+                        <button type="button"
+                                class="btn-close btn-close-white"
+                                data-bs-dismiss="modal">
+                        </button>
+
+                    </div>
+
+                    <div class="modal-body">
+
+                        <p class="text-muted">
+                            View which administrator approved each collection request
+                            and when the approval happened.
+                        </p>
+
+                        <div class="table-responsive">
+
+                            <table class="table table-bordered table-hover align-middle">
+
+                                <thead class="table-success">
+
+                                    <tr>
+                                        <th>History ID</th>
+                                        <th>Schedule ID</th>
+                                        <th>Approved By</th>
+                                        <th>Approval Date</th>
+                                        <th>Approval Time</th>
+                                    </tr>
+
+                                </thead>
+
+                                <tbody>
+
+                                    <?php if ($history_result->num_rows > 0): ?>
+
+                                        <?php while ($history = $history_result->fetch_assoc()): ?>
+
+                                            <tr>
+
+                                                <td>
+                                                    <?= (int) $history["id"]; ?>
+                                                </td>
+
+                                                <td>
+                                                    #<?= (int) $history["schedule_id"]; ?>
+                                                </td>
+
+                                                <td>
+                                                    <strong>
+                                                        <?= htmlspecialchars(
+                                                            $history["admin_name"] ?? "Unknown Admin"
+                                                        ); ?>
+                                                    </strong>
+
+                                                    <br>
+
+                                                    <small class="text-muted">
+                                                        Admin ID:
+                                                        <?= (int) $history["admin_id"]; ?>
+                                                    </small>
+                                                </td>
+
+                                                <td>
+                                                    <?= htmlspecialchars(
+                                                        date(
+                                                            "F d, Y",
+                                                            strtotime($history["approved_at"])
+                                                        )
+                                                    ); ?>
+                                                </td>
+
+                                                <td>
+                                                    <span class="badge bg-success">
+                                                        <?= htmlspecialchars(
+                                                            date(
+                                                                "h:i:s A",
+                                                                strtotime($history["approved_at"])
+                                                            )
+                                                        ); ?>
+                                                    </span>
+                                                </td>
+
+                                            </tr>
+
+                                        <?php endwhile; ?>
+
+                                    <?php else: ?>
+
+                                        <tr>
+                                            <td colspan="5"
+                                                class="text-center text-muted py-4">
+
+                                                <i class="bi bi-inbox fs-2"></i>
+
+                                                <br>
+
+                                                No approval history available yet.
+
+                                            </td>
+                                        </tr>
+
+                                    <?php endif; ?>
+
+                                </tbody>
+
+                            </table>
+
+                        </div>
+
+                    </div>
+
+                    <div class="modal-footer">
+
+                        <button type="button"
+                                class="btn btn-secondary"
+                                data-bs-dismiss="modal">
+                            Close
+                        </button>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+        </div>
 
         <!-- Footer -->
         <footer class="dashboard-footer">
@@ -1164,7 +1665,25 @@ $month_label = $date_object->format("F Y");
 
     </main>
 
-    <script src="../assets/vendor/bootstrap/js/bootstrap.bundle.min.js"></script>
+   <!-- Bootstrap JavaScript -->
+<script src="../assets/vendor/bootstrap/js/bootstrap.bundle.min.js"></script>
+
+<!-- Custom Date Range JavaScript -->
+<script>
+document.getElementById("timeframe").addEventListener("change", function () {
+
+    const customDateRange = document.getElementById("customDateRange");
+
+    if (this.value === "custom") {
+        customDateRange.style.display = "flex";
+    } else {
+        customDateRange.style.display = "none";
+    }
+
+});
+</script>
 
 </body>
 </html>
+    
+
