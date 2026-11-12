@@ -149,6 +149,52 @@ $stmt->close();
     <p class="text-secondary">
         View the regular collection routes assigned to you by the admin.
     </p>
+    <div class="search-filter-box">
+
+    <h5 class="fw-bold mb-3">Search & Filter Routes</h5>
+
+    <div class="row g-3">
+
+        <div class="col-md-5">
+            <label class="form-label">Search Household</label>
+            <input
+                type="text"
+                id="searchRoute"
+                class="form-control"
+                placeholder="Search resident name or address..."
+                onkeyup="filterRoutes()">
+        </div>
+
+        <div class="col-md-3">
+            <label class="form-label">Collection Status</label>
+            <select
+                id="statusFilter"
+                class="form-select"
+                onchange="filterRoutes()">
+
+                <option value="">All Status</option>
+                <option value="pending">Pending</option>
+                <option value="completed">Completed</option>
+                <option value="collected">Collected</option>
+                <option value="in_progress">In Progress</option>
+
+            </select>
+        </div>
+
+        
+
+        <div class="col-md-2 d-flex align-items-end">
+            <button
+                type="button"
+                class="btn btn-secondary w-100"
+                onclick="resetRouteFilters()">
+                Reset
+            </button>
+        </div>
+
+    </div>
+
+    </div>
 
     <?php if (count($routes) > 0): ?>
 
@@ -162,7 +208,7 @@ $stmt->close();
 
         <?php foreach ($groupedRoutes as $routeId => $stops): ?>
 
-            <div class="route-card">
+            <div class="route-card" data-route-id="<?= (int) $routeId ?>">
 
                 <h5 class="fw-bold">
                     <?= htmlspecialchars($stops[0]["route_name"]); ?>
@@ -400,6 +446,65 @@ async function showRegularRoute(routeId) {
 
     }
 }
+function filterRoutes() {
+
+    const search = document.getElementById("searchRoute")
+        .value.toLowerCase();
+
+    const status = document.getElementById("statusFilter")
+        .value.toLowerCase();
+
+    const routeCards = document.querySelectorAll(".route-card");
+
+    routeCards.forEach(card => {
+
+        const routeName = card.querySelector("h5")?.textContent.toLowerCase() || "";
+
+        const stops = card.querySelectorAll(".stop-item");
+
+        let matchingStops = 0;
+
+        stops.forEach(stop => {
+
+            const stopText = stop.textContent.toLowerCase();
+
+            const statusText = stopText.includes("collection status:")
+                ? stopText.split("collection status:")[1].trim().split("\n")[0].trim()
+                : "";
+
+            const matchesSearch = stopText.includes(search);
+            const matchesStatus = !status || statusText.includes(status);
+
+            const showStop = matchesSearch && matchesStatus;
+
+            stop.style.display = showStop ? "" : "none";
+
+            if (showStop) {
+                matchingStops++;
+            }
+
+        });
+
+        const matchesRouteName = routeName.includes(search);
+
+        card.style.display =
+            matchingStops > 0 || (matchesRouteName && !status)
+                ? ""
+                : "none";
+
+    });
+
+}
+
+function resetRouteFilters() {
+
+    document.getElementById("searchRoute").value = "";
+    document.getElementById("statusFilter").value = "";
+
+    filterRoutes();
+
+}
+
 </script>
 <script async
     src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCz8mz80N6FN03Q1q1nQFGeZLduXsZpNHY&loading=async&callback=initMap">
